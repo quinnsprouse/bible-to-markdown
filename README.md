@@ -20,7 +20,7 @@ A high-performance command-line tool for converting Bible text to Markdown forma
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/bible-to-markdown.git
+git clone https://github.com/quinnsprouse/bible-to-markdown.git
 cd bible-to-markdown
 
 # Install dependencies
