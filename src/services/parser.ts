@@ -2,7 +2,7 @@ import * as cheerio from 'cheerio';
 import { BibleVersion, ParsedChapter, ParsedSection, ParsedVerse } from '../types/index.js';
 
 export class BibleParser {
-  private version: BibleVersion;
+  readonly version: BibleVersion;
 
   constructor(version: BibleVersion) {
     this.version = version;
@@ -17,10 +17,11 @@ export class BibleParser {
       const chunkId = $(chunkEl).attr('id');
       if (!chunkId) return;
       
-      const match = chunkId.match(/(\w+)_(.+?)_(\d+)$/);
+      // IDs look like "netText_1_Chronicles_1" or "netText_Song_of_Solomon_1"
+      const match = chunkId.match(/^(?:netText|nasb|net_strongs2)_(.+)_(\d+)$/);
       if (!match) return;
       
-      const [, , bookName, chapterNum] = match;
+      const [, bookName, chapterNum] = match;
       const book = bookName.replace(/_/g, ' ');
       const chapter = parseInt(chapterNum);
       
@@ -39,8 +40,13 @@ export class BibleParser {
   private parseSections($: cheerio.CheerioAPI, chunkEl: any): ParsedSection[] {
     const sections: ParsedSection[] = [];
     let currentSection: ParsedSection | null = null;
+    let lastVerse: ParsedVerse | null = null;
     
-    $(chunkEl).children().each((_, el) => {
+    // Walk titles and verses in document order rather than relying on the
+    // .bodytext wrappers: the API sometimes nests a .paragraphtitle <div>
+    // inside a <p class="bodytext">, which the HTML parser closes early,
+    // leaving the rest of that paragraph's verses outside any .bodytext
+    $(chunkEl).find('.paragraphtitle, .netVerse').each((_, el) => {
       const $el = $(el);
       
       // Check for section title
@@ -56,15 +62,24 @@ export class BibleParser {
           title: title || undefined,
           verses: []
         };
-      } else if ($el.hasClass('bodytext')) {
-        // Parse verses in this paragraph
-        const verses = this.parseVerses($, el);
+      } else {
+        const verse = this.parseVerse($, el);
+        if (!verse) return;
+        
+        // Poetry splits one verse into several .netVerse spans sharing an
+        // ID (one per line) - merge them back into a single verse
+        if (lastVerse && lastVerse.id === verse.id && lastVerse.number === verse.number) {
+          lastVerse.text += ' ' + verse.text;
+          lastVerse.footnoteNumbers = [...(lastVerse.footnoteNumbers || []), ...(verse.footnoteNumbers || [])];
+          return;
+        }
+        lastVerse = verse;
         
         if (!currentSection) {
           currentSection = { verses: [] };
         }
         
-        currentSection.verses.push(...verses);
+        currentSection.verses.push(verse);
       }
     });
     
@@ -76,50 +91,48 @@ export class BibleParser {
     return sections;
   }
 
-  private parseVerses($: cheerio.CheerioAPI, bodyEl: any): ParsedVerse[] {
-    const verses: ParsedVerse[] = [];
+  private parseVerse($: cheerio.CheerioAPI, verseEl: any): ParsedVerse | null {
+    const $verse = $(verseEl);
+    const id = $verse.attr('id') || '';
     
-    $(bodyEl).find('.netVerse').each((_, verseEl) => {
-      const $verse = $(verseEl);
-      const id = $verse.attr('id') || '';
-      
-      // Extract verse number from ID (format: netText_Book_Chapter_Verse)
-      let verseNumber: number;
-      const idMatch = id.match(/netText_\w+_\d+_(\d+)$/);
-      
-      if (idMatch) {
-        verseNumber = parseInt(idMatch[1]);
+    // Extract verse number from the alt attribute (format: Book_Chapter_Verse)
+    // or the ID (format: <prefix>_Book_Chapter_Verse)
+    let verseNumber: number;
+    const alt = $verse.attr('alt') || '';
+    const idMatch = alt.match(/_\d+_(\d+)$/) || id.match(/_\d+_(\d+)$/);
+    
+    if (idMatch) {
+      verseNumber = parseInt(idMatch[1]);
+    } else {
+      // Fallback to checking for explicit verse number elements
+      const verseNumEl = $verse.find('.verseNumber');
+      if (verseNumEl.length) {
+        verseNumber = parseInt(verseNumEl.text().trim());
       } else {
-        // Fallback to checking for explicit verse number elements
-        const verseNumEl = $verse.find('.verseNumber');
-        if (verseNumEl.length) {
-          verseNumber = parseInt(verseNumEl.text().trim());
+        // Check for chapter number (verse 1)
+        const chapterNumEl = $verse.find('.chapterNumber');
+        if (chapterNumEl.length) {
+          verseNumber = parseInt(chapterNumEl.text().trim());
         } else {
-          // Check for chapter number (verse 1)
-          const chapterNumEl = $verse.find('.chapterNumber');
-          if (chapterNumEl.length) {
-            verseNumber = parseInt(chapterNumEl.text().trim());
-          } else {
-            return; // Skip if no verse number found
-          }
+          return null; // Skip if no verse number found
         }
       }
-      
-      // Extract clean text and footnote references
-      const text = this.extractCleanText($verse);
-      const footnoteNumbers = this.extractFootnoteNumbers($, $verse);
-      
-      if (text.trim()) {
-        verses.push({
-          number: verseNumber,
-          text: text.trim(),
-          id,
-          footnoteNumbers
-        });
-      }
-    });
+    }
     
-    return verses;
+    // Extract clean text and footnote references
+    const text = this.extractCleanText($verse);
+    const footnoteNumbers = this.extractFootnoteNumbers($, $verse);
+    
+    if (!text.trim()) {
+      return null;
+    }
+    
+    return {
+      number: verseNumber,
+      text: text.trim(),
+      id,
+      footnoteNumbers
+    };
   }
 
   private extractFootnoteNumbers($: cheerio.CheerioAPI, $verse: cheerio.Cheerio<any>): number[] {
@@ -163,8 +176,10 @@ export class BibleParser {
     return text;
   }
 
-  getVersionHtml(bible1: string, bible2: string): string {
-    return this.version === 'NET' ? bible1 : bible2;
+  getVersionHtml(bible1: string, _bible2: string): string {
+    // The API always returns the translation requested as bible1Translation
+    // in bible1, and the API service requests the selected version there
+    return bible1;
   }
 }
 

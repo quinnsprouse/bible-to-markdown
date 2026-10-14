@@ -29,6 +29,9 @@ export class Logger {
   }
 
   startSpinner(message: string): void {
+    // Stop any running spinner first - an orphaned ora instance keeps its
+    // render interval alive and prevents the process from exiting
+    this.stopSpinner();
     this.spinner = ora({
       text: message,
       color: 'cyan',

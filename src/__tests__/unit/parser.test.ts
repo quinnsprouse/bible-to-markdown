@@ -140,10 +140,108 @@ describe('Bible Parser', () => {
       expect(verse.text).not.toContain('<sup>');
       expect(verse.text).not.toContain('<a');
     });
+
+    it('should keep the number in numbered book names', () => {
+      const html = `
+        <div class="chunk" id="netText_1_Chronicles_1">
+          <div class="bodytext">
+            <span class="netVerse" id="netText_1_Chronicles_1_1">Adam, Seth, Enosh,</span>
+          </div>
+        </div>
+        <div class="chunk" id="netText_2_Chronicles_1">
+          <div class="bodytext">
+            <span class="netVerse" id="netText_2_Chronicles_1_1">Now Solomon the son of David</span>
+          </div>
+        </div>
+      `;
+
+      const chapters = parser.parseChapters(html);
+
+      expect(chapters.map(c => c.book)).toEqual(['1 Chronicles', '2 Chronicles']);
+    });
+
+    it('should keep every word of multi-word book names', () => {
+      const html = `
+        <div class="chunk" id="netText_Song_of_Solomon_1">
+          <div class="bodytext">
+            <span class="netVerse" id="netText_Song_of_Songs_1_1" alt="Song_of_Songs_1_1">The Song of Songs</span>
+          </div>
+        </div>
+      `;
+
+      const chapters = parser.parseChapters(html);
+
+      expect(chapters[0].book).toBe('Song of Solomon');
+      expect(chapters[0].chapter).toBe(1);
+    });
+
+    it('should read verse numbers when the verse number sits outside the verse span', () => {
+      // Mirrors the live API markup, where verses after the first in a
+      // paragraph have their verseNumber as a preceding sibling
+      const html = `
+        <div class="chunk" id="net_strongs2_Genesis_1">
+          <p class="bodytext">
+            <span id="net_strongs2_Genesis_1_2" alt="Genesis_1_2" class="netVerse "><span class="vref"><span class="verseNumber">2</span></span> Verse two.</span>
+            <span class="vref"><span class="verseNumber">3</span></span>
+            <span id="net_strongs2_Genesis_1_3" alt="Genesis_1_3" class="netVerse ">Verse three.</span>
+          </p>
+        </div>
+      `;
+
+      const chapters = parser.parseChapters(html);
+      const verses = chapters[0].sections[0].verses;
+
+      expect(chapters[0].book).toBe('Genesis');
+      expect(verses.map(v => v.number)).toEqual([2, 3]);
+    });
+
+    it('should keep verses that follow a section title nested inside a paragraph', () => {
+      // Mirrors 1 Kings 3 in the NASB markup: the parser closes the <p> at the
+      // nested <div>, leaving later verses outside any .bodytext
+      const html = `
+        <div class="chunk" id="netText_1_Kings_3">
+          <p class="bodytext">
+            <span id="netText_1_Kings_3_5" alt="1_Kings_3_5" class="netVerse ">Verse five.</span>
+            <span class="vref"><span class="verseNumber">6</span></span>
+            <div class="paragraphtitle"><h3></h3></div>
+            <span id="netText_1_Kings_3_6" alt="1_Kings_3_6" class="netVerse ">Verse six.</span>
+            <span id="netText_1_Kings_3_7" alt="1_Kings_3_7" class="netVerse ">Verse seven.</span>
+          </p>
+        </div>
+      `;
+
+      const chapters = parser.parseChapters(html);
+      const verseNumbers = chapters[0].sections.flatMap(s => s.verses.map(v => v.number));
+
+      expect(verseNumbers).toEqual([5, 6, 7]);
+    });
+
+    it('should include poetry and merge its line fragments into one verse', () => {
+      // Mirrors Genesis 1:27 in the NET markup: one span per poetic line,
+      // all sharing the verse ID, inside p.poetry rather than p.bodytext
+      const html = `
+        <div class="chunk" id="netText_Genesis_1">
+          <p class="bodytext">
+            <span id="netText_Genesis_1_26" alt="Genesis_1_26" class="netVerse ">Verse twenty-six.</span>
+          </p>
+          <p class="poetry"> <span id="netText_Genesis_1_27" alt="Genesis_1_27" class="netVerse ">God created humankind<sup> <a href="#" class="netNoteSuper">53</a></sup> in his own image,
+          <p class="poetry"> <span id="netText_Genesis_1_27" alt="Genesis_1_27" class="netVerse ">in the image of God he created them,<sup> <a href="#" class="netNoteSuper">54</a></sup>
+          <p class="poetry"> <span id="netText_Genesis_1_27" alt="Genesis_1_27" class="netVerse ">male and female he created them.</span></p>
+        </div>
+      `;
+
+      const chapters = parser.parseChapters(html);
+      const verses = chapters[0].sections[0].verses;
+
+      expect(verses.map(v => v.number)).toEqual([26, 27]);
+      expect(verses[1].text).toBe('God created humankind in his own image, in the image of God he created them, male and female he created them.');
+      expect(verses[1].footnoteNumbers).toEqual([53, 54]);
+    });
   });
 
   describe('getVersionHtml', () => {
-    it('should return NET version for NET parser', () => {
+    // The API puts the requested translation (bible1Translation) in bible1
+    it('should return bible1 for NET parser', () => {
       const netParser = createParser('NET');
       const netHtml = '<div>NET content</div>';
       const nasbHtml = '<div>NASB content</div>';
@@ -153,12 +251,12 @@ describe('Bible Parser', () => {
       expect(result).toBe(netHtml);
     });
 
-    it('should return NASB version for NASB parser', () => {
+    it('should return bible1 for NASB parser', () => {
       const nasbParser = createParser('NASB');
-      const netHtml = '<div>NET content</div>';
       const nasbHtml = '<div>NASB content</div>';
+      const netHtml = '<div>NET content</div>';
 
-      const result = nasbParser.getVersionHtml(netHtml, nasbHtml);
+      const result = nasbParser.getVersionHtml(nasbHtml, netHtml);
 
       expect(result).toBe(nasbHtml);
     });

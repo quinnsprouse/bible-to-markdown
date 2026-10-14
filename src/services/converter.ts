@@ -96,6 +96,8 @@ export class BibleConverter {
         allBooks.push(...completedBooks);
       }
       
+      logger.finishProgress(`Processed ${processedChapters} chapters`);
+      
       // Generate master index and README
       logger.logStageStart('Generating index files');
       logger.startSpinner('Creating master index');
