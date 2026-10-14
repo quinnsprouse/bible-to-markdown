@@ -22,7 +22,6 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "@types/cheerio": "^1.0.0",
     "@types/cli-progress": "^3.11.6",
     "@types/figlet": "^1.7.0",
     "@types/fs-extra": "^11.0.4",
